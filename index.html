@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sprawdzian Grupa I: IIS + NAT — rozwiązanie</title>
+  <style>
+    :root{--bg:#f6f8fa;--card:#fff;--muted:#6b7280;--accent:#0b5fff}
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;line-height:1.6;color:#111;background:var(--bg);padding:24px}
+    .container{max-width:980px;margin:0 auto}
+    header{background:linear-gradient(90deg,#0b5fff22,transparent);border-radius:12px;padding:28px 24px;margin-bottom:20px}
+    h1{margin:0;font-size:1.6rem}
+    .meta{color:var(--muted);margin-top:8px}
+    article{background:var(--card);border-radius:12px;padding:20px;box-shadow:0 6px 18px rgba(15,23,42,0.06)}
+    h2{border-left:4px solid #e6eefc;padding-left:12px;color:#0f172a}
+    pre{background:#0b1220;color:#e6f0ff;padding:12px;border-radius:8px;overflow:auto}
+    code{background:#eef2ff;padding:2px 6px;border-radius:6px;font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', 'Courier New', monospace}
+    ul,ol{margin-left:1.1rem}
+    hr{border:none;border-top:1px solid #eef2ff;margin:20px 0}
+    table{width:100%;border-collapse:collapse;margin:12px 0}
+    table th, table td{border:1px solid #eef2ff;padding:8px;text-align:left}
+    .foot{color:var(--muted);font-size:0.9rem;margin-top:18px}
+    a.button{display:inline-block;background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Sprawdzian Grupa I: IIS + NAT — rozwiązanie</h1>
+      <div class="meta">Przepisane z pliku Markdown — gotowe jako index.html</div>
+    </header>
+
+    <article>
+      <p><strong>Oznaczenia:</strong> zamień <code>imie</code> i <code>nazwisko</code> na swoje dane (bez polskich znaków), a <code>nr</code> na numer z dziennika.</p>
+      <ul>
+        <li><code>IP_MOST</code> to adres karty mostkowanej serwera (sprawdzisz przez <code>ipconfig</code>).</li>
+        <li><code>IP_HOST</code> to adres Twojego <strong>komputera fizycznego</strong>, czyli „systemu rzeczywistego” (<code>ipconfig</code> na hoście, adres z tej samej sieci co <code>IP_MOST</code>).</li>
+      </ul>
+
+      <p><strong>Kolejność wykonania:</strong> przygotowanie → role → użytkownicy → NAT → DNS → 1a → 1b → 1c → 1d → 1e.</p>
+
+      <p><strong>Zasada do zapamiętania:</strong> w przeglądarce wpisuj zawsze pełny adres z <code>http://</code> i ukośnikiem na końcu, np. <code>http://www.nazwisko/</code>. Bez tego Edge potraktuje <em>www.nazwisko</em> jak hasło do wyszuk...</p>
+
+      <hr>
+
+      <h2>0. Przygotowanie VM</h2>
+      <p><strong>[VirtualBox]</strong> maszyny wyłączone:</p>
+      <ol>
+        <li><strong>W2k25</strong>:
+          <ul>
+            <li>Karta 1: <strong>Mostkowana karta sieciowa</strong></li>
+            <li>Karta 2: <strong>Sieć wewnętrzna</strong>, nazwa <code>intnet</code></li>
+          </ul>
+        </li>
+        <li><strong>W11</strong> → Karta 1: <strong>Sieć wewnętrzna</strong>, ta sama nazwa <code>intnet</code></li>
+      </ol>
+      <p><strong>Dlaczego:</strong> serwer stoi między siecią wewnętrzną a mostkowaną i robi za router z NAT. Host (system rzeczywisty) widzi serwer przez kartę mostkowaną, co jest potrzebne w 1d.</p>
+
+      <p><strong>[W2k25]</strong> <code>ncpa.cpl</code>:</p>
+      <ol>
+        <li>Zmień nazwy kart na <strong>MOST</strong> i <strong>WEWN</strong>.</li>
+        <li><strong>WEWN</strong> → IPv4:
+          <ul>
+            <li>IP <code>10.90.0.1</code>, maska <code>255.255.0.0</code></li>
+            <li><strong>bez bramy</strong></li>
+          </ul>
+        </li>
+        <li><strong>MOST</strong>: zostaw DHCP albo ustaw adres od nauczyciela. Preferowany DNS: <code>127.0.0.1</code>.</li>
+      </ol>
+
+      <p><strong>[W11]</strong> IPv4:</p>
+      <ul>
+        <li>IP <code>10.90.0.10</code>, maska <code>255.255.0.0</code></li>
+        <li>brama <code>10.90.0.1</code></li>
+        <li>DNS <code>10.90.0.1</code></li>
+      </ul>
+
+      <p><strong>Dlaczego maska 255.255.0.0:</strong> sieć z zadania to <code>/16</code>, a <code>/16</code> oznacza właśnie maskę <code>255.255.0.0</code>.</p>
+
+      <p><strong>Test:</strong> <code>ipconfig</code> na obu maszynach i na hoście. Zanotuj <code>IP_MOST</code> i <code>IP_HOST</code>.</p>
+
+      <hr>
+
+      <h2>1. Instalacja ról</h2>
+      <p><strong>[W2k25]</strong> Menedżer serwera → <strong>Dodaj role i funkcje</strong> → Role serwera:</p>
+      <ol>
+        <li>Zaznacz <strong>Serwer DNS</strong>.</li>
+        <li>Zaznacz <strong>Dostęp zdalny</strong> → usługa roli <strong>Routing</strong>.</li>
+        <li>Zaznacz <strong>Serwer sieci Web (IIS)</strong>, a w usługach ról dodatkowo:
+          <ul>
+            <li>Zabezpieczenia → <strong>Uwierzytelnianie podstawowe</strong> (1b)</li>
+            <li>Zabezpieczenia → <strong>Ograniczenia adresów IP i domen</strong> (1d)</li>
+            <li>Narzędzia do zarządzania → <strong>Usługa zarządzania</strong> (1d)</li>
+            <li><strong>Serwer FTP</strong> → <strong>Usługa FTP</strong> (1e)</li>
+          </ul>
+        </li>
+        <li>Kliknij <strong>Zainstaluj</strong>.</li>
+      </ol>
+      <p><strong>Dlaczego:</strong> IIS jest modułowy. Bez tych usług ról odpowiednie ikony w ogóle nie pojawią się w Menedżerze IIS.</p>
+
+      <hr>
+
+      <h2>2. Konta użytkowników</h2>
+      <p><strong>[W2k25]</strong> Narzędzia → <strong>Zarządzanie komputerem</strong> → Użytkownicy i grupy lokalne → Użytkownicy → PPM → <strong>Nowy użytkownik…</strong></p>
+      <ol>
+        <li>Utwórz <code>imie</code> i <code>nazwisko</code>, oba z hasłem.</li>
+        <li>Odznacz „Użytkownik musi zmienić hasło przy następnym logowaniu”.</li>
+      </ol>
+      <p><strong>Dlaczego:</strong> tych kont użyjesz do logowania do strony (1b) i do FTP (1e). Uwierzytelnianie podstawowe i FTP sprawdzają zwykłe konta Windows.</p>
+
+      <hr>
+
+      <h2>3. NAT (zadanie NAT)</h2>
+      <p><strong>[W2k25]</strong> Narzędzia → <strong>Routing i dostęp zdalny</strong>:</p>
+      <ol>
+        <li>PPM na serwerze → <strong>Konfiguruj i włącz routing i dostęp zdalny</strong> → Dalej.</li>
+        <li>Wybierz <strong>Translator adresów sieciowych (NAT)</strong> → Dalej.</li>
+        <li><strong>Użyj tego interfejsu publicznego</strong> → <strong>MOST</strong> → Dalej.</li>
+        <li>Usługi nazw i adresów: skonfigurujesz później → Zakończ → <strong>Uruchom usługę</strong>.</li>
+      </ol>
+      <p><strong>Dlaczego:</strong> każdy adres <code>10.90.x.x</code> wychodzący przez serwer zostaje podmieniony na <code>IP_MOST</code>. Na zewnątrz widać tylko serwer.</p>
+
+      <p><strong>Test [W11]:</strong></p>
+      <ul>
+        <li><code>ping 10.90.0.1</code></li>
+        <li><code>ping 8.8.8.8</code></li>
+        <li><code>ping wp.pl</code></li>
+        <li><code>tracert 8.8.8.8</code>: pierwszy skok to <code>10.90.0.1</code></li>
+      </ul>
+
+      <p><strong>Typowy błąd:</strong> ping do <code>10.90.0.1</code> nie odpowiada. Włącz regułę zapory <em>Udostępnianie plików i drukarek (żądanie echa — ICMPv4 — przychodzące)</em>.</p>
+
+      <hr>
+
+      <h2>4. DNS + dokumentacja</h2>
+      <p><strong>[W2k25]</strong> Narzędzia → <strong>DNS</strong>:</p>
+      <ol>
+        <li><strong>Strefy wyszukiwania do przodu</strong> → PPM → <strong>Nowa strefa…</strong> → Strefa podstawowa.</li>
+        <li>Nazwa strefy: <code>nazwisko</code> → Dalej → Zakończ.</li>
+        <li>PPM na strefie → <strong>Nowy host (A lub AAAA)…</strong>:
+          <ul>
+            <li><code>www</code> → <code>IP_MOST</code></li>
+            <li><code>imie</code> → <code>IP_MOST</code></li>
+          </ul>
+        </li>
+      </ol>
+      <p><strong>Dlaczego:</strong> strefa <code>nazwisko</code> z rekordami <code>www</code> i <code>imie</code> daje pełne nazwy <code>www.nazwisko</code> i <code>imie.nazwisko</code>. Obie wskazują ten sam serwer, a IIS rozróżni witryny po nazwie hosta.</p>
+
+      <p><strong>Do dokumentacji (tego wymaga uwaga w treści zadania):</strong></p>
+      <ul>
+        <li>zrzut okna Menedżera DNS ze strefą <code>nazwisko</code> i oboma rekordami A</li>
+        <li>zrzut <code>cmd</code> z wynikami <code>nslookup www.nazwisko</code> i <code>nslookup imie.nazwisko</code> (Server: localhost, Address: <code>IP_MOST</code>)</li>
+        <li>ten sam <code>nslookup</code> na W11 (Server: <code>10.90.0.1</code>)</li>
+      </ul>
+
+      <hr>
+
+      <h2>Zadanie 1a: www.nazwisko</h2>
+      <p><strong>[W2k25]</strong></p>
+      <ol>
+        <li>Utwórz <code>C:\pRo</code> i skopiuj do niego stronę z serwera S (w Eksploratorze wpisz <code>\\adres_serwera_S</code>).</li>
+        <li>Menedżer IIS → PPM <strong>Witryny</strong> → <strong>Dodaj witrynę sieci Web…</strong>:
+          <ul>
+            <li>nazwa: <code>www</code>, ścieżka: <code>C:\pRo</code></li>
+            <li>typ: <code>http</code>, IP: <code>IP_MOST</code>, port: <code>80</code></li>
+            <li><strong>Nazwa hosta:</strong> <code>www.nazwisko</code></li>
+          </ul>
+        </li>
+        <li>Jeśli plik strony ma niestandardową nazwę: witryna → <strong>Dokument domyślny</strong> → <strong>Dodaj…</strong></li>
+      </ol>
+      <p><strong>Test:</strong> <code>http://www.nazwisko/</code> na W2k25 i na W11 wyświetla stronę z serwera S.</p>
+      <p><strong>Typowy błąd:</strong> 403.14 oznacza, że brakuje pliku na liście dokumentów domyślnych.</p>
+
+      <hr>
+
+      <h2>Zadanie 1b: logowanie do witryny</h2>
+      <p><strong>[W2k25]</strong> witryna <strong>www</strong> → <strong>Uwierzytelnianie</strong>:</p>
+      <ol>
+        <li><strong>Uwierzytelnianie anonimowe</strong> → <strong>Wyłącz</strong>.</li>
+        <li><strong>Uwierzytelnianie podstawowe</strong> → <strong>Włącz</strong>.</li>
+      </ol>
+      <p><strong>Dlaczego:</strong> dopóki działa uwierzytelnianie anonimowe, IIS wpuszcza każdego bez pytania. Po jego wyłączeniu jedyną drogą wejścia jest login i hasło. Żółte ostrzeżenie o SSL jest nor[...]</p>
+
+      <p><strong>Test (W11, okno InPrivate, żeby przeglądarka nie pamiętała logowania):</strong></p>
+      <ol>
+        <li><code>http://www.nazwisko/</code> → pojawia się okno logowania.</li>
+        <li>Wpisz złe hasło → okno wraca, a po Anuluj widać <strong>401 Unauthorized</strong>.</li>
+        <li>Wpisz <code>imie</code> + poprawne hasło → strona się wyświetla.</li>
+      </ol>
+
+      <hr>
+
+      <h2>Zadanie 1c: druga witryna imie.nazwisko</h2>
+      <p><strong>[W2k25]</strong></p>
+      <ol>
+        <li>Utwórz <code>C:\imie</code> i w Notatniku plik <code>mojedane.html</code>, np.:</li>
+      </ol>
+      <pre><code>&lt;!DOCTYPE html&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta charset="utf-8"/&gt;&lt;/head&gt;
+&lt;body&gt;&lt;h2&gt;Imię: ... | Nazwisko: ... | Nr w dzienniku: ...&lt;/h2&gt;&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+      <ol start="2">
+        <li><strong>Dodaj witrynę sieci Web…</strong>:
+          <ul>
+            <li>nazwa: <code>imie</code>, ścieżka: <code>C:\imie</code></li>
+            <li>IP: <code>IP_MOST</code>, port: <code>80</code></li>
+            <li><strong>Nazwa hosta:</strong> <code>imie.nazwisko</code></li>
+          </ul>
+        </li>
+        <li>Witryna <code>imie</code> → <strong>Dokument domyślny</strong> → <strong>Dodaj…</strong> → <code>mojedane.html</code>.</li>
+      </ol>
+      <p><strong>Dlaczego:</strong> obie witryny mają ten sam IP i port 80, ale różne nazwy hosta, więc działają jednocześnie. <code>mojedane.html</code> nie jest na domyślnej liście, dlatego trzeba go dodać ręcznie.</p>
+
+      <p><strong>Test:</strong> w dwóch kartach otwórz <code>http://www.nazwisko/</code> (pyta o login) i <code>http://imie.nazwisko/</code> (od razu pokazuje Twoje dane). Zrób jeden zrzut z oboma kartami i listą witryn, na której obi[...]</p>
+
+      <hr>
+
+      <h2>Zadanie 1d: zdalne połączenie i blokada systemu rzeczywistego</h2>
+      <p><strong>[W2k25] Przygotowanie:</strong></p>
+      <ol>
+        <li><strong>Default Web Site</strong> → <strong>Rozpocznij</strong>, jeśli jest zatrzymana.</li>
+        <li><strong>Test przed blokadą:</strong> na hoście otwórz <code>http://IP_MOST/</code>. Widać stronę powitalną IIS. Zapisz zrzut, bo to „przed”.</li>
+        <li>Serwer → <strong>Usługa zarządzania</strong>:
+          <ul>
+            <li>zaznacz <strong>Włącz połączenia zdalne</strong></li>
+            <li>wybierz <strong>Poświadczenia systemu Windows</strong> lub poświadczenia Menedżera usług IIS</li>
+            <li>IP <code>IP_MOST</code>, port <code>8172</code></li>
+            <li><strong>Zastosuj</strong> → <strong>Uruchom</strong></li>
+          </ul>
+        </li>
+        <li>Serwer → <strong>Użytkownicy Menedżera usług IIS</strong> → <strong>Dodaj użytkownika…</strong> → <code>webadmin</code> + hasło.</li>
+        <li><strong>Default Web Site</strong> → <strong>Uprawnienia Menedżera usług IIS</strong> → <strong>Zezwalaj użytkownikowi…</strong> → <code>webadmin</code>.</li>
+        <li>Serwer → <strong>Delegowanie funkcji</strong> → <strong>Ograniczenia adresów IP i domen</strong> → zmień z „Tylko do odczytu” na <strong>Odczyt/zapis</strong>.</li>
+      </ol>
+
+      <p><strong>Połączenie zdalne:</strong></p>
+      <ol>
+        <li>Strona początkowa → <strong>Połącz z witryną…</strong></li>
+        <li>Serwer: <code>IP_MOST</code>, witryna: <code>Default Web Site</code> → <code>webadmin</code> + hasło.</li>
+        <li>Przy alercie certyfikatu kliknij <strong>Połącz</strong> → nadaj nazwę połączenia.</li>
+      </ol>
+
+      <p><strong>Blokada (w węźle połączenia zdalnego):</strong></p>
+      <ol>
+        <li><strong>Ograniczenia adresów IP i domen</strong> → <strong>Dodaj wpis Odmów…</strong></li>
+        <li><strong>Określony adres IP:</strong> <code>IP_HOST</code> → OK.</li>
+      </ol>
+
+      <p><strong>Dlaczego:</strong> IIS sprawdza adres nadawcy żądania. Gdy pasuje do wpisu „Odmów”, zamiast strony odsyła błąd 403.</p>
+
+      <p><strong>Test:</strong></p>
+      <ul>
+        <li>pasek stanu Menedżera IIS: „IP_MOST:8172 jako webadmin”</li>
+        <li><code>http://IP_MOST/</code> (odśwież przez Ctrl+F5) → <strong>403 Forbidden</strong></li>
+        <li><strong>W11:</strong> <code>http://IP_MOST/</code> → strona IIS działa, bo blokada dotyczy tylko hosta</li>
+      </ul>
+
+      <hr>
+
+      <h2>Zadanie 1e: FTP z izolacją użytkowników</h2>
+      <p><strong>[W2k25] Katalogi:</strong></p>
+      <ol>
+        <li>Utwórz <code>C:\FTP\LocalUser\imie</code> i <code>C:\FTP\LocalUser\nazwisko</code>. Nazwa <code>LocalUser</code> musi być dokładnie taka.</li>
+        <li>Do każdego folderu wrzuć inny plik testowy, np. <code>plik_imie.txt</code> i <code>plik_nazwisko.txt</code>.</li>
+        <li>Folder <code>imie</code> → Właściwości → <strong>Zabezpieczenia</strong> → dodaj użytkownika <code>imie</code> → <strong>Modyfikacja</strong>. To samo dla <code>nazwisko</code> w jego folderze.</li>
+      </ol>
+
+      <p><strong>[W2k25] Witryna FTP:</strong> PPM <strong>Witryny</strong> → <strong>Dodaj witrynę FTP…</strong></p>
+      <ol>
+        <li>Nazwa <code>FTP</code>, ścieżka <code>C:\FTP</code> → Dalej.</li>
+        <li>IP: <code>IP_MOST</code>, port: <code>21</code>, SSL: <strong>Bez protokołu SSL</strong> → Dalej.</li>
+        <li>Uwierzytelnianie: <strong>Podstawowe</strong>.</li>
+        <li>Autoryzacja: <strong>Określeni użytkownicy</strong> → <code>imie, nazwisko</code>.</li>
+        <li>Uprawnienia: <strong>Odczyt</strong> + <strong>Zapis</strong> → Zakończ.</li>
+        <li>Witryna FTP → <strong>Izolowanie użytkowników FTP</strong> → <strong>Katalog nazwy użytkownika (wyłącz katalogi globalne)</strong> → <strong>Zastosuj</strong>.</li>
+      </ol>
+
+      <p><strong>Test</strong> (<code>cmd</code> → <code>ftp</code> → <code>open IP_MOST</code>):</p>
+      <ol>
+        <li>Zaloguj się jako <code>imie</code>:
+          <ul>
+            <li><code>dir</code> pokazuje tylko <code>plik_imie.txt</code></li>
+            <li><code>put C:\Windows\win.ini</code> działa (zapis)</li>
+            <li><code>cd ..</code> → dalej ten sam katalog (nie da się wyjść)</li>
+          </ul>
+        </li>
+        <li>Zaloguj się jako <code>nazwisko</code>: <code>dir</code> pokazuje tylko jego plik, bez <code>win.ini</code> od <code>imie</code>.</li>
+        <li>Zaloguj się jako <strong>Administrator</strong> → <strong>530</strong> (brak dostępu).</li>
+      </ol>
+
+      <p>Testuj najpierw na serwerze, potem z W11.</p>
+
+      <hr>
+
+      <h2>Tabela błędów</h2>
+      <table>
+        <thead>
+          <tr><th>Błąd</th><th>Przyczyna</th><th>Naprawa</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Edge wyszukuje zamiast otworzyć</td><td>brak <code>http://</code> w adresie</td><td>wpisz <code>http://www.nazwisko/</code></td></tr>
+          <tr><td>ERR_NAME_NOT_RESOLVED</td><td>brak rekordu A lub zły DNS w karcie</td><td>dodaj host, ustaw DNS</td></tr>
+          <tr><td>401 Unauthorized</td><td>złe hasło lub konto</td><td>sprawdź konto w Zarządzaniu komputerem</td></tr>
+          <tr><td>Strona nie pyta o hasło</td><td>anonimowe nadal włączone albo przeglądarka pamięta login</td><td>wyłącz anonimowe, testuj w InPrivate</td></tr>
+          <tr><td>403.14</td><td>pliku nie ma w Dokumencie domyślnym</td><td><strong>Dodaj…</strong> nazwę pliku</td></tr>
+          <tr><td>403 na hoście bez blokady</td><td>Default Web Site zatrzymana albo zły wpis</td><td>sprawdź stan i adres w ograniczeniach</td></tr>
+          <tr><td>Blokada nie działa</td><td>zły <code>IP_HOST</code> (np. adres karty VirtualBox)</td><td><code>ipconfig</code> na hoście, adres z sieci mostkowanej</td></tr>
+          <tr><td>Szara funkcja w połączeniu zdalnym</td><td>delegowanie „Tylko do odczytu”</td><td>zmień na <strong>Odczyt/zapis</strong></td></tr>
+          <tr><td>Brak połączenia z :8172</td><td>WMSVC zatrzymana</td><td>Usługa zarządzania → <strong>Uruchom</strong></td></tr>
+          <tr><td>„Inna witryna używa portu”</td><td>brak nazwy hosta w powiązaniu</td><td>uzupełnij nazwę hosta</td></tr>
+          <tr><td>FTP 530 „home directory inaccessible”</td><td>zła nazwa folderu (<code>LocalUser</code>, nazwa konta)</td><td>popraw ścieżkę</td></tr>
+          <tr><td>FTP 550 przy <code>put</code></td><td>brak Zapisu w FTP lub Modyfikacji w NTFS</td><td>popraw oba miejsca</td></tr>
+          <tr><td>W11 bez internetu</td><td>zły interfejs publiczny w NAT lub brak bramy</td><td>NAT na <strong>MOST</strong>, brama <code>10.90.0.1</code></td></tr>
+        </tbody>
+      </table>
+
+      <p>Mogę połączyć obie grupy w jeden dokument do wydrukowania przed sprawdzianem.</p>
+
+      <p class="foot">Wysłano z programu Outlook dla systemu Android</p>
+    </article>
+
+    <p style="margin-top:12px">Plik utworzony: <a class="button" href="https://janpopowicz.github.io/">Otwórz stronę GitHub Pages</a> — bezpośredni plik: <a href="https://janpopowicz.github.io/index.html">index.html</a></p>
+  </div>
+</body>
+</html>
