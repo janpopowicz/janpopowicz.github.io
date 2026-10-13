@@ -21,10 +21,19 @@
     table th, table td{border:1px solid #eef2ff;padding:8px;text-align:left}
     .foot{color:var(--muted);font-size:0.9rem;margin-top:18px}
     a.button{display:inline-block;background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none}
+
+    /* lock overlay */
+    #lockOverlay{position:fixed;inset:0;background:rgba(2,6,23,0.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:9999;}
+    #lockCard{background:#fff;padding:20px;border-radius:10px;max-width:420px;width:92%;box-shadow:0 10px 30px rgba(2,6,23,0.3);text-align:center}
+    #lockCard h3{margin:0 0 8px;font-size:1.1rem}
+    #lockCard p{color:var(--muted);margin:0 0 12px}
+    #lockCard input{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eefc;margin-bottom:10px;font-size:1rem}
+    #lockCard button{background:var(--accent);color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer}
+    #lockCard .hint{font-size:0.85rem;color:#999;margin-top:8px}
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="container" id="pageContent">
     <header>
       <h1>Sprawdzian Grupa I: IIS + NAT — rozwiązanie</h1>
       <div class="meta">Przepisane z pliku Markdown — gotowe jako index.html</div>
@@ -54,9 +63,10 @@
         </li>
         <li><strong>W11</strong> → Karta 1: <strong>Sieć wewnętrzna</strong>, ta sama nazwa <code>intnet</code></li>
       </ol>
-      <p><strong>Dlaczego:</strong> serwer stoi między siecią wewnętrzną a mostkowaną i robi za router z NAT. Host (system rzeczywisty) widzi serwer przez kartę mostkowaną, co jest potrzebne w 1d.</p>
+      <p><strong>Dlaczego:</strong> serwer stoi między siecią wewnętrzną a mostkowan�� i robi za router z NAT. Host (system rzeczywisty) widzi serwer przez kartę mostkowaną, co jest potrzebne w 1d.</p>
 
-      <p><strong>[W2k25]</strong> <code>ncpa.cpl</code>:</p>
+      <p><strong>[W2k25]</strong> <code>ncpa.cpl</code>:
+      </p>
       <ol>
         <li>Zmień nazwy kart na <strong>MOST</strong> i <strong>WEWN</strong>.</li>
         <li><strong>WEWN</strong> → IPv4:
@@ -144,6 +154,7 @@
           </ul>
         </li>
       </ol>
+
       <p><strong>Dlaczego:</strong> strefa <code>nazwisko</code> z rekordami <code>www</code> i <code>imie</code> daje pełne nazwy <code>www.nazwisko</code> i <code>imie.nazwisko</code>. Obie wskazują ten sam serwer, a IIS rozróżni witryny po nazwie hosta.</p>
 
       <p><strong>Do dokumentacji (tego wymaga uwaga w treści zadania):</strong></p>
@@ -322,5 +333,78 @@
 
     <p style="margin-top:12px">Plik utworzony: <a class="button" href="https://janpopowicz.github.io/">Otwórz stronę GitHub Pages</a> — bezpośredni plik: <a href="https://janpopowicz.github.io/index.html">index.html</a></p>
   </div>
+
+  <!-- Lock overlay (hidden by default) -->
+  <div id="lockOverlay" style="display:none" aria-hidden="true">
+    <div id="lockCard" role="dialog" aria-labelledby="lockTitle">
+      <h3 id="lockTitle">Strona zablokowana</h3>
+      <p>Wróciłeś do karty — podaj hasło, aby zobaczyć treść.</p>
+      <input id="unlockInput" type="password" placeholder="Hasło">
+      <div>
+        <button id="unlockBtn">Otwórz</button>
+      </div>
+      <div class="hint">(hasło: 123)</div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const PASSWORD = '123'; // <-- hasło ustawione zgodnie z prośbą (uwaga: tylko frontend!)
+      let locked = false;
+      const overlay = document.getElementById('lockOverlay');
+      const input = document.getElementById('unlockInput');
+      const btn = document.getElementById('unlockBtn');
+
+      function showLock(){
+        overlay.style.display = 'flex';
+        overlay.setAttribute('aria-hidden','false');
+        input.value = '';
+        setTimeout(()=>input.focus(),50);
+      }
+      function hideLock(){
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden','true');
+      }
+
+      // when the tab becomes hidden, mark locked=true
+      document.addEventListener('visibilitychange', ()=>{
+        if(document.hidden){
+          locked = true;
+        } else {
+          if(locked){
+            showLock();
+          }
+        }
+      });
+
+      // also treat blur/focus (some browsers fire blur instead of visibilitychange)
+      window.addEventListener('blur', ()=>{ locked = true; });
+      window.addEventListener('focus', ()=>{ if(locked) showLock(); });
+
+      // unlock handler
+      function tryUnlock(){
+        if(input.value === PASSWORD){
+          locked = false;
+          hideLock();
+        } else {
+          input.value = '';
+          input.focus();
+          // small shake animation
+          const c = document.getElementById('lockCard');
+          c.style.transform = 'translateX(-4px)';
+          setTimeout(()=>c.style.transform = 'translateX(4px)',60);
+          setTimeout(()=>c.style.transform = 'translateX(0)',120);
+        }
+      }
+      btn.addEventListener('click', tryUnlock);
+      input.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') tryUnlock(); });
+
+      // ensure overlay is hidden on first load
+      hideLock();
+
+      // optional: prevent right-click or selection on overlay (keeps UX clean)
+      overlay.addEventListener('contextmenu', e=>e.preventDefault());
+    })();
+  </script>
 </body>
 </html>
